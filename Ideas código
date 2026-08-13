@@ -1,0 +1,7 @@
+Idea para el código principal:
+Hay 5 pulsadores en total:
+Pulsador 1: entrar y salir del menú de modificaciones y de ver los valores.
+Pulsadores 2-4:
+Hacer un menú con las distintas opciones y umbrales que pueda modificar el usuario, que con un botón se baje por la pantalla, el otro sube y que con el otro se seleccione.
+Al estar en una opción, que se ponga a la derecha una flecha que represente eso.
+En las pantallas de personalización, un botón aumenta, el otro disminuye y el que falta vuelve a la pantalla anterior y guarda los cambios.
