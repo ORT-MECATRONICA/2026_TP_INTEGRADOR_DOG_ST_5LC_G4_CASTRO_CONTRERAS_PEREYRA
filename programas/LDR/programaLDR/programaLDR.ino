@@ -2,7 +2,7 @@
 #define LED 2
 #define LDR 34
 
-const int umbral = 2500;
+const int umbral = 500;
 
 void setup() {
   Serial.begin(115200);
@@ -12,10 +12,11 @@ void setup() {
 
 
 void loop() {
-  int valor = analogRead(LDR);
+  int valorInicial = analogRead(LDR);
+  int valorFinal = map(valorInicial, 0, 4095, 0, 100);
   Serial.print("Valor del LDR: ");
-  Serial.println(valor);
-  if (valor < umbral) {
+  Serial.println(valorFinal);
+  if (valorFinal < umbral) {
     digitalWrite(LED, HIGH);  // Prender LED
   } else {
     digitalWrite(LED, LOW);   // Apagar LED
