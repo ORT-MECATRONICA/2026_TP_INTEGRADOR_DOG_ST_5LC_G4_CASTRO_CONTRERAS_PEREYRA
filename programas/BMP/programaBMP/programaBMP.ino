@@ -1,26 +1,28 @@
 // Grupo 4: Tiziano Castro, Tomás Contreras y Tomas Pereyra
-#define LED 2
-#define LDR 34
+#include <Wire.h>
+#include <Adafruit_BMP280.h>
 
-const int umbral = 2500;
+Adafruit_BMP280 bmp;
+#define INTERVALO 3000
+unsigned long tiempoAnterior = 0;
 
 void setup() {
-  Serial.begin(115200);
-  pinMode(LED, OUTPUT);
-  pinMode(LDR, INPUT);
+  Serial.begin(115200);  
+  while (!bmp.begin(0x76)) {}
+  Serial.println("Sensor BMP280 inicializado correctamente");
 }
-
 
 void loop() {
-  int valor = analogRead(LDR);
-  Serial.print("Valor del LDR: ");
-  Serial.println(valor);
-  if (valor < umbral) {
-    digitalWrite(LED, HIGH);  // Prender LED
-  } else {
-    digitalWrite(LED, LOW);   // Apagar LED
+  unsigned long tiempoActual = millis();
+  if (tiempoActual - tiempoAnterior >= INTERVALO) {
+    tiempoAnterior = tiempoActual;
+    float temperatura = bmp.readTemperature();
+    float presion = bmp.readPressure() / 100.0F; // Convertir Pa a hPa
+    Serial.print("Temperatura: ");
+    Serial.print(temperatura);
+    Serial.println(" °C");
+    Serial.print("Presión: ");
+    Serial.print(presion);
+    Serial.println(" hPa");
   }
-  delay(200); // Pausa
 }
-
-
