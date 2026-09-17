@@ -1,6 +1,6 @@
 // Grupo 4: Tiziano Castro, Tomás Contreras y Tomas Pereyra
 #define B1 35
-#define LED 34
+#define LED 2
 
 void setup() {
   pinMode(B1, INPUT);
