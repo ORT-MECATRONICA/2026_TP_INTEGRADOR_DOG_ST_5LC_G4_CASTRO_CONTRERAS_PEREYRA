@@ -88,7 +88,7 @@ void loop() {
     if (digitalRead(OPTO) == LOW) {}
       Serial.println("El opto recibió una señal);
     } else {
-      Serial.println("El opto no recibió ninguna señal);
+      Serial.println("El opto no recibió ninguna señal");
     }
   }
   void pulsadores();
