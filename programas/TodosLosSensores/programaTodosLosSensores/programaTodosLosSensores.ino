@@ -17,6 +17,7 @@
 #define SCL5V 19
 #define RXD2 16 // TX del LD2410
 #define TXD2 17 // RX del LD2410
+#define OPTO 33
 #define LDR 34
 #define MQ2 35
 #define INTERVALO 5000
@@ -37,6 +38,7 @@ void setup() {
   pinMode(B1, INPUT);
   pinMode(B2, INPUT);  
   pinMode(B3, INPUT);  
+  pinMode(OPTO, INPUT_PULLUP);
   while (!bmp.begin(0x76)) {}
   Serial.println("Sensor BMP280 inicializado correctamente");
   while (!ina219.begin()) {}
@@ -82,6 +84,11 @@ void loop() {
       Serial.println(" cm");
     } else {
       Serial.println("No se detectó a nadie")
+    }
+    if (digitalRead(OPTO) == LOW) {}
+      Serial.println("El opto recibió una señal);
+    } else {
+      Serial.println("El opto no recibió ninguna señal);
     }
   }
   void pulsadores();
