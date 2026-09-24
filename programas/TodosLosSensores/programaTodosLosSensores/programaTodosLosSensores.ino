@@ -1,4 +1,5 @@
 // Grupo 4: Tiziano Castro, Tomás Contreras y Tomas Pereyra
+// Este no es el código definitivo, simplemente sirve para probar todos los componentes a la vez
 #include <Wire.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_INA219.h>
