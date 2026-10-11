@@ -99,6 +99,7 @@ void pulsadores () {
     digitalWrite(LEDR, HIGH);
     digitalWrite(LEDA, LOW);
     digitalWrite(LEDV, LOW);
+    lcd.setCursor(0, 0);
     lcd.print("                ");
     lcd.print("Botón 1");
   }
@@ -106,6 +107,7 @@ void pulsadores () {
     digitalWrite(LEDR, LOW);
     digitalWrite(LEDA, HIGH);
     digitalWrite(LEDV, LOW);
+    lcd.setCursor(0, 0);
     lcd.print("                ");
     lcd.print("Botón 2");
   }
@@ -113,6 +115,7 @@ void pulsadores () {
     digitalWrite(LEDR, LOW);
     digitalWrite(LEDA, LOW);
     digitalWrite(LEDV, HIGH);
+    lcd.setCursor(0, 0);
     lcd.print("                ");
     lcd.print("Botón 3");
   }
@@ -120,6 +123,7 @@ void pulsadores () {
     digitalWrite(LEDR, HIGH);
     digitalWrite(LEDA, HIGH);
     digitalWrite(LEDV, LOW);
+    lcd.setCursor(0, 0);
     lcd.print("                ");
     lcd.print("Botones 1 y 2");
   }
@@ -127,6 +131,7 @@ void pulsadores () {
     digitalWrite(LEDR, HIGH);
     digitalWrite(LEDA, LOW);
     digitalWrite(LEDV, HIGH);
+    lcd.setCursor(0, 0);
     lcd.print("                ");
     lcd.print("Botones 1 y 3");
   }
@@ -134,6 +139,7 @@ void pulsadores () {
     digitalWrite(LEDR, LOW);
     digitalWrite(LEDA, HIGH);
     digitalWrite(LEDV, HIGH);
+    lcd.setCursor(0, 0);
     lcd.print("                ");
     lcd.print("Botones 2 y 3");
   }
@@ -141,6 +147,7 @@ void pulsadores () {
     digitalWrite(LEDR, HIGH);
     digitalWrite(LEDA, HIGH);
     digitalWrite(LEDV, HIGH);
+    lcd.setCursor(0, 0);
     lcd.print("                ");
     lcd.print("Botones 1, 2 y 3");
   }
@@ -148,6 +155,7 @@ void pulsadores () {
     digitalWrite(LEDR, LOW);
     digitalWrite(LEDA, LOW);
     digitalWrite(LEDV, LOW);
+    lcd.setCursor(0, 0);
     lcd.print("                ");
   }
 }
