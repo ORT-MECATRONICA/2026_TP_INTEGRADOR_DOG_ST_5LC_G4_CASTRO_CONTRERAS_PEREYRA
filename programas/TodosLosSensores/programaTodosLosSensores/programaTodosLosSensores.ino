@@ -83,10 +83,10 @@ void loop() {
       Serial.print(radar.detectionDistance());
       Serial.println(" cm");
     } else {
-      Serial.println("No se detectó a nadie")
+      Serial.println("No se detectó a nadie");
     }
     if (digitalRead(OPTO) == LOW) {}
-      Serial.println("El opto recibió una señal);
+      Serial.println("El opto recibió una señal");
     } else {
       Serial.println("El opto no recibió ninguna señal");
     }
