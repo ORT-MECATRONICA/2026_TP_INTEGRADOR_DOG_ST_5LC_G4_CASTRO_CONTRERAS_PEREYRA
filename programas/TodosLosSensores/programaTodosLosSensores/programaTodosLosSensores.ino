@@ -39,11 +39,11 @@ void setup() {
   pinMode(B2, INPUT);  
   pinMode(B3, INPUT);  
   pinMode(OPTO, INPUT_PULLUP);
+  Wire1.begin(SDA5V, SCL5V);
   while (!bmp.begin(0x76)) {}
   Serial.println("Sensor BMP280 inicializado correctamente");
   while (!ina219.begin()) {}
   Serial.println("INA219 inicializado");
-  Wire1.begin(SDA5V, SCL5V);
   lcd.init();          
   lcd.backlight();     
   lcd.setCursor(0, 0);
