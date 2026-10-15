@@ -130,7 +130,15 @@ void loop() {
 
     case(soltarPulsador):
     if (ultimoPulso1 == true) {
-
+      ultimoPulso1 == false;
+      estadoActual = (estadoPrograma)((estadoActual - 1) % 10);
+    }
+    if (ultimoPulso2 == true) {
+      ultimoPulso2 == false;
+      estadoActual = (estadoPrograma)((estadoActual + 1) % 10);
+    }
+    if (ultimoPulso3 == true) {
+      //Poner los 10 if para MN de 0 a 9
     }
 
 
