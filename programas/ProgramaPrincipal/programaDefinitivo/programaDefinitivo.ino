@@ -9,6 +9,17 @@
 #include <Adafruit_INA219.h>
 #include <LiquidCrystal_I2C.h>
 #include <ld2410.h>
+#include <Preferences.h>
+
+// Definiciones de variación de umbrales
+#define VARIACION_UMBRAL_TEMPERATURA 1   // 1 °C
+#define VARIACION_UMBRAL_PRESION     1   // 1 hPa
+#define VARIACION_UMBRAL_CORRIENTE   1   // 1 mA
+#define VARIACION_UMBRAL_LUZ         1   // 1 %
+#define VARIACION_UMBRAL_GAS         1   // 1 %
+#define VARIACION_UMBRAL_PRESENCIA   5   // 5 cm
+#define VARIACION_UMBRAL_GMT         1   // 1 hora
+#define VARIACION_UMBRAL_MQTT        5   // 5 segundos
 
 // Wi-Fi y MQTT
 const char* ssid = "MECA-IoT-V2";
@@ -19,7 +30,7 @@ const uint8_t name_device = 134;
 unsigned long now = millis();    ///valor actual
 unsigned long lastMeasure1 = 0;  ///variable para contar el tiempo actual
 unsigned long lastMeasure2 = 0;  ///variable para contar el tiempo actual
-const unsigned long interval_envio = 30000;  //Intervalo de envio de datos mqtt. Valor inicial
+unsigned long interval_envio = 30000;  //Intervalo de envio de datos mqtt. Valor inicial
 const unsigned long interval_leeo = 60000;   //Intervalo de lectura de datos y guardado en la cola. Valor inicial
 long cambiar_periodo_envio;
 int i = 0;
@@ -27,7 +38,7 @@ int i = 0;
 // Time
 long unsigned int timestamp;  // hora
 const char* ntpServer = "south-america.pool.ntp.org";
-const long gmtOffset_sec = -10800;
+long gmtOffset_sec = -10800; // GMT-3 por defecto (-10800 s)
 const int daylightOffset_sec = 0;
 
 // Variables ingresar a la cola struct
@@ -48,149 +59,37 @@ AsyncMqttClient mqttClient;
 TimerHandle_t mqttReconnectTimer;
 TimerHandle_t wifiReconnectTimer;
 
+// Objeto para almacenamiento persistente en Flash
+Preferences preferences;
+
+// Estructura de datos
 typedef struct {
   long time;
-  float T1;  // temperatura en grados
-  float P1;  // valor presion entre 0 y 99 
-  float luz;  // valor entre 0 y 99, si hay luz es cercano al 100 
-  float G1; // valor gas entre 0 y 99 
-  float cor; // valor corriente entre 0 y 99
-  bool pre; // Lectura sensores de presencia 1 presencia 0 no presencia
-  bool oct; // Lectura sensores de presencia 1 presencia 0 no presencia
+  float T1;   // temperatura en grados
+  float P1;   // valor presion en hPa
+  float luz;  // valor entre 0 y 100% 
+  float G1;   // valor gas entre 0 y 100% 
+  float cor;  // valor corriente en mA
+  bool pre;   // Lectura sensores de presencia 1 presencia 0 no presencia
+  bool oct;   // Lectura sensores de optoacoplador 1 presencia 0 no presencia
   bool Alarma; // si se supera un umbral
-}
+} estructura;
+
 const int valor_max_struct = 1000;          ///valor vector de struct
 estructura datos_struct[valor_max_struct];  ///Guardo valores hasta que lo pueda enviar
 estructura aux2;
 
-void setupmqtt() {
-  mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
-  wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
-  WiFi.onEvent(WiFiEvent);
-  mqttClient.onConnect(onMqttConnect);
-  mqttClient.onDisconnect(onMqttDisconnect);
-  mqttClient.onPublish(onMqttPublish);
-  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
-  mqttClient.setCredentials(MQTT_USERNAME, MQTT_PASSWORD);
-  connectToWifi();
-}
-void fun_envio_mqtt() {
-  fun_saca();           // veo si hay valores nuevos
-  if (flag_vacio == 0)  // si hay los envio
-  {
-    Serial.print("enviando");
-    snprintf(mqtt_payload, sizeof(mqtt_payload), 
-         "%d&%ld&%.2f&%.2f&%.2f&%.2f&%.2f&%u&%u&%u", 
-         name_device, aux2.time, aux2.T1, aux2.P1, aux2.luz, 
-         aux2.G1, aux2.cor, aux2.pre, aux2.oct, aux2.Alarma);
-    aux2.time = 0;                                                                                                                                                   ///limpio valores
-    aux2.T1 = 0;
-    aux2.P1 = 0;
-    aux2.luz = 0;
-    aux2.G1 = 0;
-    aux2.cor = 0;
-    aux2.pre = 0;
-    aux2.oct = 0;
-    aux2.Alarma = 0;
+// Variables globales de mediciones de sensores
+float T1 = 0;
+float P1 = 0;
+float luz = 0;
+float G1 = 0;
+float cor = 0;
+bool pre = false;
+bool oct = false;
+bool Alarma = false;
+int distancia_radar = 0;
 
-    Serial.print("Publish message: ");
-    Serial.println(mqtt_payload);
-    // Publishes Temperature and Humidity values
-    uint16_t packetIdPub1 = mqttClient.publish(MQTT_PUB, 1, true, mqtt_payload);
-  } else {
-    Serial.println("no hay valores nuevos");
-  }
-}  
-void connectToWifi() {
-  Serial.println("Connecting to Wi-Fi...");
-  WiFi.begin(ssid, password);
-}  
-void connectToMqtt() {
-  Serial.println("Connecting to MQTT...");
-  mqttClient.connect();
-}  
-void WiFiEvent(WiFiEvent_t event) {
-  Serial.printf("[WiFi-event] event: %d\n", event);
-  switch (event) {
-    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-      Serial.println("WiFi connected");
-      Serial.println("IP address: ");
-      Serial.println(WiFi.localIP());
-      connectToMqtt();
-      break;
-    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-      Serial.println("WiFi lost connection");
-      xTimerStop(mqttReconnectTimer, 0);  // Para evitar reconectarse al MQTT mientras se conecta al Wi-Fi
-      xTimerStart(wifiReconnectTimer, 0);
-      break;
-  }
-}
-void onMqttConnect(bool sessionPresent) {
-  Serial.println("Connected to MQTT.");
-  Serial.print("Session present: ");
-  Serial.println(sessionPresent);
-}
-void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-  Serial.println("Disconnected from MQTT.");
-  if (WiFi.isConnected()) {
-    xTimerStart(mqttReconnectTimer, 0);
-  }
-}
-void onMqttPublish(uint16_t packetId) {
-  Serial.print("Publish acknowledged.");
-  Serial.print("  packetId: ");
-  Serial.println(packetId);
-}
-void fun_saca() {
-  if (indice_saca != indice_entra) {
-    aux2.time = datos_struct[indice_saca].time;
-    aux2.T1 = datos_struct[indice_saca].T1;
-    aux2.P1 = datos_struct[indice_saca].P1;
-    aux2.luz = datos_struct[indice_saca].luz;
-    aux2.G1 = datos_struct[indice_saca].G1;
-    aux2.cor = datos_struct[indice_saca].cor;
-    aux2.pre = datos_struct[indice_saca].pre;
-    aux2.oct = datos_struct[indice_saca].oct;
-    aux2.Alarma = datos_struct[indice_saca].Alarma;
-    flag_vacio = 0;
-    Serial.println(indice_saca);
-    if (indice_saca >= (valor_max_struct - 1)) {
-      indice_saca = 0;
-    } else {
-      indice_saca++;
-    }
-    Serial.print("saco valores de la struct isaca:");
-    Serial.println(indice_saca);
-  } else {
-    flag_vacio = 1;  // no hay datos
-  }
-  return;
-}
-void fun_entra(void) {
-  if (indice_entra >= valor_max_struct) {
-    indice_entra = 0;  // si llego al maximo de la cola se vuelve a cero
-  }
-  Serial.print("> NTP Time:");
-  timestamp = time(NULL);
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    Serial.println("Failed to obtain time");
-    return;  // si no puede conseguir la hora
-  }
-  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
-  datos_struct[indice_entra].time = timestamp;
-  datos_struct[indice_entra].T1 = 3;  // leeo los datos, acá va la funcion de cada sensor
-  datos_struct[indice_entra].P1 = 4;  
-  datos_struct[indice_entra].luz = 5;
-  datos_struct[indice_entra].G1 = 6;
-  datos_struct[indice_entra].cor = 7;
-  datos_struct[indice_entra].pre = 8;
-  datos_struct[indice_entra].oct = 9;
-  datos_struct[indice_entra].Alarma = 1;
-  indice_entra++;
-  Serial.print("saco valores de la struct indice_entra");
-  Serial.println(indice_entra);
-}
 typedef enum {
   // Control
   RST,
@@ -204,8 +103,7 @@ typedef enum {
   MN5, // gas y luz
   MN6, // luz y corriente
   MN7, // corriente y presencia humana
-  MN8, // presencia humana y opto
-  MN9, // opto y guía
+  MN8, // presencia humana y guía
   // Umbrales y pantallas (0 es la pantalla principal, 1 para aumentar el umbral y 2 para disminuirlo)
   guia,
   GMT0,
@@ -232,10 +130,8 @@ typedef enum {
   presencia0,
   presencia1,
   presencia2,
-  opto0,
-  opto1,
-  opto2,
 } estadoPrograma;
+
 estadoPrograma estadoActual = RST;
 estadoPrograma estadoPrevio = RST;
 
@@ -262,7 +158,7 @@ Adafruit_INA219 ina219;
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 ld2410 radar;
 
-// Variables
+// Variables de tiempo y rebote
 unsigned long tiempoActual;
 unsigned long tiempoAnterior = 0;
 bool ultimoPulso1 = false;
@@ -277,20 +173,241 @@ unsigned long tiempoPulso3 = 0;
 unsigned long desfasaje = 0;
 unsigned long tiempoMillis = 0;
 unsigned long tiempoLiberacion = 0;
-float temperatura;
-float presion;
-float corriente;
 int valorInicialLDR;
-float valorFinalLDR;
 int valorInicialMQ2;
-float valorFinalMQ2;
-String presenciaHumana;
-String opto;
+
+// Umbrales configurables
+int UT1 = 30;     // Umbral temperatura (°C)
+int UP1 = 1013;   // Umbral presion (hPa)
+int Uluz = 50;    // Umbral luz (%)
+int UG1 = 30;     // Umbral gas (%)
+int Ucor = 100;   // Umbral corriente (mA)
+int Upre = 100;   // Umbral presencia humana (distancia en cm)
+
+// Declaración de funciones
+void connectToWifi();
+void connectToMqtt();
+void WiFiEvent(WiFiEvent_t event);
+void onMqttConnect(bool sessionPresent);
+void onMqttDisconnect(AsyncMqttClientDisconnectReason reason);
+void onMqttPublish(uint16_t packetId);
+void fun_envio_mqtt();
+void fun_saca();
+void fun_entra();
+void lecturas();
+void pulsosMenu();
+void verificarUmbrales();
+void cargarPreferencias();
+void guardarPreferencias();
+
+void setupmqtt() {
+  mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
+  wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
+  WiFi.onEvent(WiFiEvent);
+  mqttClient.onConnect(onMqttConnect);
+  mqttClient.onDisconnect(onMqttDisconnect);
+  mqttClient.onPublish(onMqttPublish);
+  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+  mqttClient.setCredentials(MQTT_USERNAME, MQTT_PASSWORD);
+  connectToWifi();
+}
+
+void fun_envio_mqtt() {
+  fun_saca();           // veo si hay valores nuevos
+  if (flag_vacio == 0)  // si hay los envio
+  {
+    Serial.print("enviando");
+    snprintf(mqtt_payload, sizeof(mqtt_payload), 
+             "%d&%ld&%.2f&%.2f&%.2f&%.2f&%.2f&%u&%u&%u", 
+             name_device, aux2.time, aux2.T1, aux2.P1, aux2.luz, 
+             aux2.G1, aux2.cor, aux2.pre, aux2.oct, aux2.Alarma);
+    aux2.time = 0;                                                                                                                                                                                                                                                          ///limpio valores
+    aux2.T1 = 0;
+    aux2.P1 = 0;
+    aux2.luz = 0;
+    aux2.G1 = 0;
+    aux2.cor = 0;
+    aux2.pre = 0;
+    aux2.oct = 0;
+    aux2.Alarma = 0;
+
+    Serial.print("Publish message: ");
+    Serial.println(mqtt_payload);
+    uint16_t packetIdPub1 = mqttClient.publish(MQTT_PUB, 1, true, mqtt_payload);
+  } else {
+    Serial.println("no hay valores nuevos");
+  }
+}  
+
+void connectToWifi() {
+  Serial.println("Connecting to Wi-Fi...");
+  WiFi.begin(ssid, password);
+}  
+
+void connectToMqtt() {
+  Serial.println("Connecting to MQTT...");
+  mqttClient.connect();
+}  
+
+void WiFiEvent(WiFiEvent_t event) {
+  Serial.printf("[WiFi-event] event: %d\n", event);
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      Serial.println("WiFi connected");
+      Serial.println("IP address: ");
+      Serial.println(WiFi.localIP());
+      connectToMqtt();
+      break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      Serial.println("WiFi lost connection");
+      xTimerStop(mqttReconnectTimer, 0);
+      xTimerStart(wifiReconnectTimer, 0);
+      break;
+  }
+}
+
+void onMqttConnect(bool sessionPresent) {
+  Serial.println("Connected to MQTT.");
+  Serial.print("Session present: ");
+  Serial.println(sessionPresent);
+}
+
+void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
+  Serial.println("Disconnected from MQTT.");
+  if (WiFi.isConnected()) {
+    xTimerStart(mqttReconnectTimer, 0);
+  }
+}
+
+void onMqttPublish(uint16_t packetId) {
+  Serial.print("Publish acknowledged.");
+  Serial.print("  packetId: ");
+  Serial.println(packetId);
+}
+
+void fun_saca() {
+  if (indice_saca != indice_entra) {
+    aux2.time = datos_struct[indice_saca].time;
+    aux2.T1 = datos_struct[indice_saca].T1;
+    aux2.P1 = datos_struct[indice_saca].P1;
+    aux2.luz = datos_struct[indice_saca].luz;
+    aux2.G1 = datos_struct[indice_saca].G1;
+    aux2.cor = datos_struct[indice_saca].cor;
+    aux2.pre = datos_struct[indice_saca].pre;
+    aux2.oct = datos_struct[indice_saca].oct;
+    aux2.Alarma = datos_struct[indice_saca].Alarma;
+    flag_vacio = 0;
+    Serial.println(indice_saca);
+    if (indice_saca >= (valor_max_struct - 1)) {
+      indice_saca = 0;
+    } else {
+      indice_saca++;
+    }
+    Serial.print("saco valores de la struct isaca:");
+    Serial.println(indice_saca);
+  } else {
+    flag_vacio = 1;  // no hay datos
+  }
+  return;
+}
+
+void fun_entra(void) {
+  if (indice_entra >= valor_max_struct) {
+    indice_entra = 0;  // si llego al maximo de la cola se vuelve a cero
+  }
+  Serial.print("> NTP Time:");
+  timestamp = time(NULL);
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("Failed to obtain time");
+    return;  // si no puede conseguir la hora
+  }
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+
+  datos_struct[indice_entra].time = timestamp;
+  datos_struct[indice_entra].T1 = T1; 
+  datos_struct[indice_entra].P1 = P1;  
+  datos_struct[indice_entra].luz = luz;
+  datos_struct[indice_entra].G1 = G1;
+  datos_struct[indice_entra].cor = cor;
+  datos_struct[indice_entra].pre = pre;
+  datos_struct[indice_entra].oct = oct;
+  datos_struct[indice_entra].Alarma = Alarma;
+  indice_entra++;
+  
+  Serial.print("Ingresado a la struct, indice_entra: ");
+  Serial.println(indice_entra);
+}
+
+// Cargar umbrales desde memoria NVS
+void cargarPreferencias() {
+  preferences.begin("umbrales", true);
+  UT1 = preferences.getInt("UT1", 30);
+  UP1 = preferences.getInt("UP1", 1013);
+  Uluz = preferences.getInt("Uluz", 50);
+  UG1 = preferences.getInt("UG1", 30);
+  Ucor = preferences.getInt("Ucor", 100);
+  Upre = preferences.getInt("Upre", 100);
+  gmtOffset_sec = preferences.getLong("gmtOffset", -10800);
+  interval_envio = preferences.getULong("intEnvio", 30000);
+  preferences.end();
+}
+
+// Guardar umbrales en memoria NVS
+void guardarPreferencias() {
+  preferences.begin("umbrales", false);
+  preferences.putInt("UT1", UT1);
+  preferences.putInt("UP1", UP1);
+  preferences.putInt("Uluz", Uluz);
+  preferences.putInt("UG1", UG1);
+  preferences.putInt("Ucor", Ucor);
+  preferences.putInt("Upre", Upre);
+  preferences.putLong("gmtOffset", gmtOffset_sec);
+  preferences.putULong("intEnvio", interval_envio);
+  preferences.end();
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+}
+
+// Comparación de mediciones con umbrales y manejo de leds
+void verificarUmbrales() {
+  int contadorAlertas = 0;
+
+  if (T1 > UT1) contadorAlertas++;
+  if (P1 > UP1) contadorAlertas++;
+  if (cor > Ucor) contadorAlertas++;
+  if (luz > Uluz) contadorAlertas++;
+  if (G1 > UG1) contadorAlertas++;
+  if (pre) contadorAlertas++;
+  if (oct) contadorAlertas++;
+
+  if (contadorAlertas == 0) {
+    digitalWrite(LEDV, HIGH);
+    digitalWrite(LEDA, LOW);
+    digitalWrite(LEDR, LOW);
+    Alarma = false;
+  } else if (contadorAlertas == 1) {
+    digitalWrite(LEDV, LOW);
+    digitalWrite(LEDA, HIGH);
+    digitalWrite(LEDR, LOW);
+    Alarma = true;
+  } else { // contadorAlertas > 1
+    digitalWrite(LEDV, LOW);
+    digitalWrite(LEDA, LOW);
+    digitalWrite(LEDR, HIGH);
+    Alarma = true;
+  }
+}
 
 void setup() {
   Serial.begin(115200);
+  
+  // Cargar umbrales previamente guardados
+  cargarPreferencias();
+  
   setupmqtt();
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
   pinMode(LEDR, OUTPUT);
   pinMode(LEDA, OUTPUT);  
   pinMode(LEDV, OUTPUT);  
@@ -298,13 +415,23 @@ void setup() {
   pinMode(B2, INPUT);  
   pinMode(B3, INPUT);  
   pinMode(OPTO, INPUT_PULLUP);
+
   Wire1.begin(SDA5V, SCL5V);
-  while (!bmp.begin(0x76)) {}
+  while (!bmp.begin(0x76)) {
+    Serial.println("Esperando sensor BMP280...");
+    delay(500);
+  }
   Serial.println("Sensor BMP280 inicializado correctamente");
-  while (!ina219.begin()) {}
+
+  while (!ina219.begin()) {
+    Serial.println("Esperando sensor INA219...");
+    delay(500);
+  }
   Serial.println("INA219 inicializado");
+
   lcd.init();          
   lcd.backlight();     
+
   Serial2.begin(256000, SERIAL_8N1, RXD2, TXD2);
   radar.begin(Serial2);
 }
@@ -312,75 +439,380 @@ void setup() {
 void loop() {
   switch (estadoActual) {
     case(RST):
-    estadoActual = MN0;
-    break;
+      estadoActual = MN0;
+      break;
 
     case(soltarPulsador):
-    if (ultimoPulso1 == true) {
-      ultimoPulso1 == false;
-      estadoActual = (estadoPrograma)((estadoActual - 1) % 10);
-    }
-    if (ultimoPulso2 == true) {
-      ultimoPulso2 == false;
-      estadoActual = (estadoPrograma)((estadoActual + 1) % 10);
-    }
-    if (ultimoPulso3 == true) {
-      //Poner los 10 if para MN de 0 a 9
-    }
+      if (ultimoPulso1 == true) { // Botón 1: Retroceder en menú o Aumentar umbral
+        ultimoPulso1 = false;
+        if (estadoPrevio >= MN0 && estadoPrevio <= MN8) {
+          int idx = estadoPrevio - MN0;
+          estadoActual = (estadoPrograma)(MN0 + (idx + 8) % 9);
+        } else {
+          switch (estadoPrevio) {
+            case GMT0:         estadoActual = GMT1; break;
+            case MQTT0:        estadoActual = MQTT1; break;
+            case temperatura0: estadoActual = temperatura1; break;
+            case presion0:     estadoActual = presion1; break;
+            case gas0:         estadoActual = gas1; break;
+            case luz0:         estadoActual = luz1; break;
+            case corriente0:   estadoActual = corriente1; break;
+            case presencia0:   estadoActual = presencia1; break;
+            default:           break;
+          }
+        }
+      }
+      else if (ultimoPulso2 == true) { // Botón 2: Avanzar en menú o Disminuir umbral
+        ultimoPulso2 = false;
+        if (estadoPrevio >= MN0 && estadoPrevio <= MN8) {
+          int idx = estadoPrevio - MN0;
+          estadoActual = (estadoPrograma)(MN0 + (idx + 1) % 9);
+        } else {
+          switch (estadoPrevio) {
+            case GMT0:         estadoActual = GMT2; break;
+            case MQTT0:        estadoActual = MQTT2; break;
+            case temperatura0: estadoActual = temperatura2; break;
+            case presion0:     estadoActual = presion2; break;
+            case gas0:         estadoActual = gas2; break;
+            case luz0:         estadoActual = luz2; break;
+            case corriente0:   estadoActual = corriente2; break;
+            case presencia0:   estadoActual = presencia2; break;
+            default:           break;
+          }
+        }
+      }
+      else if (ultimoPulso3 == true) { // Botón 3: Seleccionar o Volver guardando a MN0
+        ultimoPulso3 = false;
+        if (estadoPrevio >= MN0 && estadoPrevio <= MN8) {
+          switch (estadoPrevio) {
+            case MN0: estadoActual = guia; break;
+            case MN1: estadoActual = GMT0; break;
+            case MN2: estadoActual = MQTT0; break;
+            case MN3: estadoActual = temperatura0; break;
+            case MN4: estadoActual = presion0; break;
+            case MN5: estadoActual = gas0; break;
+            case MN6: estadoActual = luz0; break;
+            case MN7: estadoActual = corriente0; break;
+            case MN8: estadoActual = presencia0; break;
+            default: break;
+          }
+        } else {
+          // Al salir de cualquier submenú hacia el menú principal, guardamos preferencias
+          guardarPreferencias();
+          estadoActual = MN0;
+        }
+      }
+      break;
 
-
+    // --- Menú principal ---
     case(MN0):
-    if (estadoPrevio == RST || estadoPrevio == MN1 || estadoPrevio == MN9) {
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("Guia <");
-      lcd.setCursor(0, 1);
-      lcd.print("GMT");
-      estadoPrevio = MN0;
-    }
-    pulsosMenu();
-    break;
-    
+      if (estadoPrevio != MN0) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Guia <");
+        lcd.setCursor(0, 1);
+        lcd.print("GMT");
+        estadoPrevio = MN0;
+      }
+      pulsosMenu();
+      break;
 
+    case(MN1):
+      if (estadoPrevio != MN1) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("GMT <");
+        lcd.setCursor(0, 1);
+        lcd.print("MQTT");
+        estadoPrevio = MN1;
+      }
+      pulsosMenu();
+      break;
+
+    case(MN2):
+      if (estadoPrevio != MN2) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("MQTT <");
+        lcd.setCursor(0, 1);
+        lcd.print("Temperatura");
+        estadoPrevio = MN2;
+      }
+      pulsosMenu();
+      break;
+
+    case(MN3):
+      if (estadoPrevio != MN3) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Temperatura <");
+        lcd.setCursor(0, 1);
+        lcd.print("Presion");
+        estadoPrevio = MN3;
+      }
+      pulsosMenu();
+      break;
+
+    case(MN4):
+      if (estadoPrevio != MN4) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Presion <");
+        lcd.setCursor(0, 1);
+        lcd.print("Gas");
+        estadoPrevio = MN4;
+      }
+      pulsosMenu();
+      break;
+
+    case(MN5):
+      if (estadoPrevio != MN5) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Gas <");
+        lcd.setCursor(0, 1);
+        lcd.print("Luz");
+        estadoPrevio = MN5;
+      }
+      pulsosMenu();
+      break;
+
+    case(MN6):
+      if (estadoPrevio != MN6) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Luz <");
+        lcd.setCursor(0, 1);
+        lcd.print("Corriente");
+        estadoPrevio = MN6;
+      }
+      pulsosMenu();
+      break;
+
+    case(MN7):
+      if (estadoPrevio != MN7) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Corriente <");
+        lcd.setCursor(0, 1);
+        lcd.print("Presencia");
+        estadoPrevio = MN7;
+      }
+      pulsosMenu();
+      break;
+
+    case(MN8):
+      if (estadoPrevio != MN8) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Presencia <");
+        lcd.setCursor(0, 1);
+        lcd.print("Guia");
+        estadoPrevio = MN8;
+      }
+      pulsosMenu();
+      break;
+
+    // --- Guía ---
+    case (guia):
+      if (estadoPrevio != guia) {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("B1:+ B2:-");
+        lcd.setCursor(0, 1);
+        lcd.print("B3: Guardar/MN0");
+        estadoPrevio = guia;
+      }
+      pulsosMenu();
+      break;
+
+    // --- Submenú GMT ---
+    case (GMT0):
+      lcd.setCursor(0, 0);
+      lcd.print("GMT (+/-1h)     ");
+      lcd.setCursor(0, 1);
+      lcd.print("U:");
+      lcd.print(gmtOffset_sec / 3600);
+      lcd.print("h R:");
+      lcd.print(gmtOffset_sec / 3600);
+      lcd.print("h   ");
+      pulsosMenu();
+      break;
+
+    case (GMT1):
+      gmtOffset_sec += (VARIACION_UMBRAL_GMT * 3600);
+      estadoActual = GMT0;
+      break;
+
+    case (GMT2):
+      gmtOffset_sec -= (VARIACION_UMBRAL_GMT * 3600);
+      estadoActual = GMT0;
+      break;
+
+    // --- Submenú MQTT ---
+    case (MQTT0):
+      lcd.setCursor(0, 0);
+      lcd.print("MQTT (+/-5s)    ");
+      lcd.setCursor(0, 1);
+      lcd.print("U:");
+      lcd.print(interval_envio / 1000);
+      lcd.print("s R:");
+      lcd.print(interval_envio / 1000);
+      lcd.print("s   ");
+      pulsosMenu();
+      break;
+
+    case (MQTT1):
+      interval_envio += (VARIACION_UMBRAL_MQTT * 1000);
+      estadoActual = MQTT0;
+      break;
+
+    case (MQTT2):
+      if (interval_envio > (VARIACION_UMBRAL_MQTT * 1000)) {
+        interval_envio -= (VARIACION_UMBRAL_MQTT * 1000);
+      }
+      estadoActual = MQTT0;
+      break;
+
+    // --- Submenú Temperatura ---
+    case (temperatura0):
+      lcd.setCursor(0, 0);
+      lcd.print("Temp (+/-1C)    ");
+      lcd.setCursor(0, 1);
+      lcd.print("U:");
+      lcd.print(UT1);
+      lcd.print("C R:");
+      lcd.print(T1, 1);
+      lcd.print("C  ");
+      pulsosMenu();
+      break;
+
+    case (temperatura1):
+      UT1 += VARIACION_UMBRAL_TEMPERATURA;
+      estadoActual = temperatura0;
+      break;
+
+    case (temperatura2):
+      UT1 -= VARIACION_UMBRAL_TEMPERATURA;
+      estadoActual = temperatura0;
+      break;
+
+    // --- Submenú Presión ---
+    case (presion0):
+      lcd.setCursor(0, 0);
+      lcd.print("Pres (+/-1hPa)  ");
+      lcd.setCursor(0, 1);
+      lcd.print("U:");
+      lcd.print(UP1);
+      lcd.print(" R:");
+      lcd.print((int)P1);
+      lcd.print("hPa ");
+      pulsosMenu();
+      break;
+
+    case (presion1):
+      UP1 += VARIACION_UMBRAL_PRESION;
+      estadoActual = presion0;
+      break;
+
+    case (presion2):
+      UP1 -= VARIACION_UMBRAL_PRESION;
+      estadoActual = presion0;
+      break;
+
+    // --- Submenú Gas ---
+    case (gas0):
+      lcd.setCursor(0, 0);
+      lcd.print("Gas (+/-1%)     ");
+      lcd.setCursor(0, 1);
+      lcd.print("U:");
+      lcd.print(UG1);
+      lcd.print("% R:");
+      lcd.print((int)G1);
+      lcd.print("%   ");
+      pulsosMenu();
+      break;
+
+    case (gas1):
+      if (UG1 < 100) UG1 += VARIACION_UMBRAL_GAS;
+      estadoActual = gas0;
+      break;
+
+    case (gas2):
+      if (UG1 > 0) UG1 -= VARIACION_UMBRAL_GAS;
+      estadoActual = gas0;
+      break;
+
+    // --- Submenú Luz ---
+    case (luz0):
+      lcd.setCursor(0, 0);
+      lcd.print("Luz (+/-1%)     ");
+      lcd.setCursor(0, 1);
+      lcd.print("U:");
+      lcd.print(Uluz);
+      lcd.print("% R:");
+      lcd.print((int)luz);
+      lcd.print("%   ");
+      pulsosMenu();
+      break;
+
+    case (luz1):
+      if (Uluz < 100) Uluz += VARIACION_UMBRAL_LUZ;
+      estadoActual = luz0;
+      break;
+
+    case (luz2):
+      if (Uluz > 0) Uluz -= VARIACION_UMBRAL_LUZ;
+      estadoActual = luz0;
+      break;
+
+    // --- Submenú Corriente ---
+    case (corriente0):
+      lcd.setCursor(0, 0);
+      lcd.print("Cor (+/-1mA)    ");
+      lcd.setCursor(0, 1);
+      lcd.print("U:");
+      lcd.print(Ucor);
+      lcd.print("mA R:");
+      lcd.print((int)cor);
+      lcd.print("mA ");
+      pulsosMenu();
+      break;
+
+    case (corriente1):
+      Ucor += VARIACION_UMBRAL_CORRIENTE;
+      estadoActual = corriente0;
+      break;
+
+    case (corriente2):
+      if (Ucor > 0) Ucor -= VARIACION_UMBRAL_CORRIENTE;
+      estadoActual = corriente0;
+      break;
+
+    // --- Submenú Presencia Humana ---
+    case (presencia0):
+      lcd.setCursor(0, 0);
+      lcd.print("Pres (+/-5cm)   ");
+      lcd.setCursor(0, 1);
+      lcd.print("U:");
+      lcd.print(Upre);
+      lcd.print("cm R:");
+      lcd.print(distancia_radar);
+      lcd.print("cm ");
+      pulsosMenu();
+      break;
+
+    case (presencia1):
+      Upre += VARIACION_UMBRAL_PRESENCIA;
+      estadoActual = presencia0;
+      break;
+
+    case (presencia2):
+      if (Upre >= VARIACION_UMBRAL_PRESENCIA) Upre -= VARIACION_UMBRAL_PRESENCIA;
+      estadoActual = presencia0;
+      break;
   }
-  unsigned long tiempoActual = millis();
-  if (tiempoActual - tiempoAnterior >= INTERVALO) {
-    tiempoAnterior = tiempoActual;
-    float temperatura = bmp.readTemperature();
-    float presion = bmp.readPressure() / 100.0F; // Convertir Pa a hPa
-    Serial.print("Temperatura: ");
-    Serial.print(temperatura);
-    Serial.println(" °C");
-    Serial.print("Presión: ");
-    Serial.print(presion);
-    Serial.println(" hPa");
-    float corriente = ina219.getCurrent_mA();
-    Serial.print("Corriente: ");
-    Serial.print(corriente);
-    Serial.println(" mA");
-    int valorInicialLDR = analogRead(LDR);
-    float valorFinalLDR = map(valorInicialLDR, 0, 4095, 0, 100);
-    Serial.print("Valor del LDR: ");
-    Serial.print(valorFinalLDR);
-    Serial.println("%");
-    int valorInicialMQ2 = analogRead(MQ2);
-    float valorFinalMQ2 = map(valorInicialMQ2, 0, 4095, 0, 100);
-    Serial.print("Valor del MQ2: ");
-    Serial.print(valorFinalMQ2);
-    Serial.println("%");
-    if (radar.presenceDetected()) {
-      Serial.print("Distancia: ");
-      Serial.print(radar.detectionDistance());
-      Serial.println(" cm");
-    } else {
-      Serial.println("No se detectó a nadie");
-    }
-    if (digitalRead(OPTO) == LOW) {
-      Serial.println("El opto recibió una señal");
-    } else {
-      Serial.println("El opto no recibió ninguna señal");
-    }
-  }
+
   lecturas();
   now = millis();
   if (now - lastMeasure1 > interval_envio) {  // envio el doble de lectura por si falla algun envio
@@ -397,23 +829,41 @@ void lecturas() {
   tiempoActual = millis();
   if (tiempoActual - tiempoAnterior >= INTERVALO) {
     tiempoAnterior = tiempoActual;
-    temperatura = bmp.readTemperature();
-    presion = bmp.readPressure() / 100.0F; // Convertir Pa a hPa
-    corriente = ina219.getCurrent_mA();
+    T1 = bmp.readTemperature();
+    P1 = bmp.readPressure() / 100.0F; // Convertir Pa a hPa
+    cor = ina219.getCurrent_mA();
     valorInicialLDR = analogRead(LDR);
-    valorFinalLDR = map(valorInicialLDR, 0, 4095, 0, 100);
+    luz = map(valorInicialLDR, 0, 4095, 0, 100);
     valorInicialMQ2 = analogRead(MQ2);
-    valorFinalMQ2 = map(valorInicialMQ2, 0, 4095, 0, 100);
+    G1 = map(valorInicialMQ2, 0, 4095, 0, 100);
+    
+    // Lectura del radar LD2410
+    radar.read();
+    distancia_radar = 0;
     if (radar.presenceDetected()) {
-      presenciaHumana = "Distancia " + radar.detectionDistance() + " cm";
-    } else {
-      presenciaHumana = "No se detectó a nadie";
+      if (radar.movingTargetDetected()) {
+        distancia_radar = radar.movingTargetDistance();
+      } else if (radar.stationaryTargetDetected()) {
+        distancia_radar = radar.stationaryTargetDistance();
+      }
     }
+
+    // Evaluación de presencia por distancia menor al umbral Upre
+    if (distancia_radar > 0 && distancia_radar < Upre) {
+      pre = true;
+    } else {
+      pre = false;
+    }
+
+    // Optoacoplador
     if (digitalRead(OPTO) == LOW) {
-      opto = "El opto recibió una señal";
+      oct = true;
     } else {
-      opto = "El opto no recibió ninguna señal";
+      oct = false;
     }
+
+    // Evaluación de alertas y control de LEDs
+    verificarUmbrales();
   }
 }
 
