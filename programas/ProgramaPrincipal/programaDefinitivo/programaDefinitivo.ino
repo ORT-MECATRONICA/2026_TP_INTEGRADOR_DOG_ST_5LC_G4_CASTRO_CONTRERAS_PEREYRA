@@ -1,7 +1,8 @@
 // Grupo 4: Tiziano Castro, Tomás Contreras y Tomas Pereyra
 
 #include <WiFi.h>
-#include "AsyncMqttClient.h"
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
 #include <Wire.h>
 #include "time.h"
 #include "Arduino.h"
@@ -21,19 +22,17 @@
 #define VARIACION_UMBRAL_GMT         1   // 1 hora
 #define VARIACION_UMBRAL_MQTT        5   // 5 segundos
 
-// Wi-Fi y MQTT
+// Wi-Fi
 const char* ssid = "MECA-IoT-V2";
 const char* password = "IoT$2026";
 const uint8_t name_device = 134;
 
 // Timers
-unsigned long now = millis();    ///valor actual
-unsigned long lastMeasure1 = 0;  ///variable para contar el tiempo actual
-unsigned long lastMeasure2 = 0;  ///variable para contar el tiempo actual
-unsigned long interval_envio = 30000;  //Intervalo de envio de datos mqtt. Valor inicial
-const unsigned long interval_leeo = 60000;   //Intervalo de lectura de datos y guardado en la cola. Valor inicial
-long cambiar_periodo_envio;
-int i = 0;
+unsigned long now = millis();    /// valor actual
+unsigned long lastMeasure1 = 0;  /// variable para contar el tiempo actual
+unsigned long lastMeasure2 = 0;  /// variable para contar el tiempo actual
+unsigned long interval_envio = 30000;  // Intervalo de envio de datos mqtt. Valor inicial
+const unsigned long interval_leeo = 60000;   // Intervalo de lectura de datos y guardado en la cola. Valor inicial
 
 // Time
 long unsigned int timestamp;  // hora
@@ -46,18 +45,18 @@ int indice_entra = 0;
 int indice_saca = 0;
 bool flag_vacio = 1;
 
-// MQTT
-#define MQTT_HOST IPAddress(192, 168, 10, 151)  // Se debe cambiar por el ip de meca o hall del 4
-#define MQTT_PORT 1884
+// MQTT (EMQX CLOUD SSL/TLS)
+#define MQTT_HOST "sa11b75f.ala.us-east-1.emqxsl.com"
+#define MQTT_PORT 8883
 #define MQTT_USERNAME "esp32"
 #define MQTT_PASSWORD "mirko15"
+#define MQTT_PUB "/esp32/datos_sensores"
+
 char mqtt_payload[150];
 
-// Test MQTT Topic
-#define MQTT_PUB "/esp32/datos_sensores"
-AsyncMqttClient mqttClient;
-TimerHandle_t mqttReconnectTimer;
-TimerHandle_t wifiReconnectTimer;
+// Objetos de Red y MQTT SSL
+WiFiClientSecure espClient;
+PubSubClient mqttClient(espClient);
 
 // Objeto para almacenamiento persistente en Flash
 Preferences preferences;
@@ -75,8 +74,8 @@ typedef struct {
   bool Alarma; // si se supera un umbral
 } estructura;
 
-const int valor_max_struct = 1000;          ///valor vector de struct
-estructura datos_struct[valor_max_struct];  ///Guardo valores hasta que lo pueda enviar
+const int valor_max_struct = 1000;          /// valor vector de struct
+estructura datos_struct[valor_max_struct];  /// Guardo valores hasta que lo pueda enviar
 estructura aux2;
 
 // Variables globales de mediciones de sensores
@@ -187,10 +186,6 @@ int Upre = 100;   // Umbral presencia humana (distancia en cm)
 // Declaración de funciones
 void connectToWifi();
 void connectToMqtt();
-void WiFiEvent(WiFiEvent_t event);
-void onMqttConnect(bool sessionPresent);
-void onMqttDisconnect(AsyncMqttClientDisconnectReason reason);
-void onMqttPublish(uint16_t packetId);
 void fun_envio_mqtt();
 void fun_saca();
 void fun_entra();
@@ -200,28 +195,46 @@ void verificarUmbrales();
 void cargarPreferencias();
 void guardarPreferencias();
 
-void setupmqtt() {
-  mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
-  wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void*)0, reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
-  WiFi.onEvent(WiFiEvent);
-  mqttClient.onConnect(onMqttConnect);
-  mqttClient.onDisconnect(onMqttDisconnect);
-  mqttClient.onPublish(onMqttPublish);
-  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
-  mqttClient.setCredentials(MQTT_USERNAME, MQTT_PASSWORD);
-  connectToWifi();
+void connectToWifi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  Serial.println("Connecting to Wi-Fi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void connectToMqtt() {
+  while (!mqttClient.connected()) {
+    Serial.print("Connecting to MQTT (EMQX Cloud SSL)...");
+    String clientId = "ESP32_Grupo_" + String(name_device) + "_" + WiFi.macAddress();
+    
+    if (mqttClient.connect(clientId.c_str(), MQTT_USERNAME, MQTT_PASSWORD)) {
+      Serial.println(" ¡Conectado a MQTT!");
+    } else {
+      Serial.print(" Falló conexión, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" Reintentando en 5 segundos...");
+      delay(5000);
+    }
+  }
 }
 
 void fun_envio_mqtt() {
   fun_saca();           // veo si hay valores nuevos
   if (flag_vacio == 0)  // si hay los envio
   {
-    Serial.print("enviando");
+    Serial.print("enviando ");
     snprintf(mqtt_payload, sizeof(mqtt_payload), 
              "%d&%ld&%.2f&%.2f&%.2f&%.2f&%.2f&%u&%u&%u", 
              name_device, aux2.time, aux2.T1, aux2.P1, aux2.luz, 
              aux2.G1, aux2.cor, aux2.pre, aux2.oct, aux2.Alarma);
-    aux2.time = 0;                                                                                                                                                                                                                                                          ///limpio valores
+    
+    aux2.time = 0;      /// limpio valores
     aux2.T1 = 0;
     aux2.P1 = 0;
     aux2.luz = 0;
@@ -233,56 +246,10 @@ void fun_envio_mqtt() {
 
     Serial.print("Publish message: ");
     Serial.println(mqtt_payload);
-    uint16_t packetIdPub1 = mqttClient.publish(MQTT_PUB, 1, true, mqtt_payload);
+    mqttClient.publish(MQTT_PUB, mqtt_payload);
   } else {
     Serial.println("no hay valores nuevos");
   }
-}  
-
-void connectToWifi() {
-  Serial.println("Connecting to Wi-Fi...");
-  WiFi.begin(ssid, password);
-}  
-
-void connectToMqtt() {
-  Serial.println("Connecting to MQTT...");
-  mqttClient.connect();
-}  
-
-void WiFiEvent(WiFiEvent_t event) {
-  Serial.printf("[WiFi-event] event: %d\n", event);
-  switch (event) {
-    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-      Serial.println("WiFi connected");
-      Serial.println("IP address: ");
-      Serial.println(WiFi.localIP());
-      connectToMqtt();
-      break;
-    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-      Serial.println("WiFi lost connection");
-      xTimerStop(mqttReconnectTimer, 0);
-      xTimerStart(wifiReconnectTimer, 0);
-      break;
-  }
-}
-
-void onMqttConnect(bool sessionPresent) {
-  Serial.println("Connected to MQTT.");
-  Serial.print("Session present: ");
-  Serial.println(sessionPresent);
-}
-
-void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-  Serial.println("Disconnected from MQTT.");
-  if (WiFi.isConnected()) {
-    xTimerStart(mqttReconnectTimer, 0);
-  }
-}
-
-void onMqttPublish(uint16_t packetId) {
-  Serial.print("Publish acknowledged.");
-  Serial.print("  packetId: ");
-  Serial.println(packetId);
 }
 
 void fun_saca() {
@@ -308,7 +275,6 @@ void fun_saca() {
   } else {
     flag_vacio = 1;  // no hay datos
   }
-  return;
 }
 
 void fun_entra(void) {
@@ -405,7 +371,12 @@ void setup() {
   // Cargar umbrales previamente guardados
   cargarPreferencias();
   
-  setupmqtt();
+  // Configuración de Wi-Fi y MQTT SSL
+  connectToWifi();
+  espClient.setInsecure(); // Permite SSL sin verificar certificado CA en Flash
+  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+
+  // Configuración del servidor de hora NTP
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
   pinMode(LEDR, OUTPUT);
@@ -437,6 +408,15 @@ void setup() {
 }
 
 void loop() {
+  // Verificación constante de Wi-Fi y servidor MQTT
+  if (WiFi.status() != WL_CONNECTED) {
+    connectToWifi();
+  }
+  if (!mqttClient.connected()) {
+    connectToMqtt();
+  }
+  mqttClient.loop();
+
   switch (estadoActual) {
     case(RST):
       estadoActual = MN0;
@@ -473,7 +453,7 @@ void loop() {
             case MQTT0:        estadoActual = MQTT2; break;
             case temperatura0: estadoActual = temperatura2; break;
             case presion0:     estadoActual = presion2; break;
-            case gas0:         estadoActual = gas2; break;
+            case gas0:         estadoActual = gas1; break;
             case luz0:         estadoActual = luz2; break;
             case corriente0:   estadoActual = corriente2; break;
             case presencia0:   estadoActual = presencia2; break;
@@ -815,13 +795,13 @@ void loop() {
 
   lecturas();
   now = millis();
-  if (now - lastMeasure1 > interval_envio) {  // envio el doble de lectura por si falla algun envio
-    lastMeasure1 = now;                       // cargo el valor actual de millis
-    fun_envio_mqtt();                         // envio los valores por mqtt
+  if (now - lastMeasure1 > interval_envio) {
+    lastMeasure1 = now;        // cargo el valor actual de millis
+    fun_envio_mqtt();          // envio los valores por mqtt
   }
   if (now - lastMeasure2 > interval_leeo) {
-    lastMeasure2 = now;  // cargo el valor actual de millis
-    fun_entra();         // ingreso los valores a la cola struct
+    lastMeasure2 = now;        // cargo el valor actual de millis
+    fun_entra();               // ingreso los valores a la cola struct
   }
 }
 
