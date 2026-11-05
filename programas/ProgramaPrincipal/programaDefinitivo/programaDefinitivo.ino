@@ -141,19 +141,22 @@ estadoPrograma estadoPrevio = RST;
 #define B1 5
 #define B2 23
 #define B3 32
-#define SDA5V 18
-#define SCL5V 19
-#define RXD2 16 // TX del LD2410
-#define TXD2 17 // RX del LD2410
+#define SDA5V 18 // Pin SDA para el LCD (5V)
+#define SCL5V 19 // Pin SCL para el LCD (5V)
+#define RXD2 16  // TX del LD2410
+#define TXD2 17  // RX del LD2410
 #define OPTO 33
 #define LDR 34
 #define MQ2 35
 #define ESPERA_PULSO 30
 #define INTERVALO 5000
 
-// Definición objetos
-Adafruit_BMP280 bmp;
+// Definición de objetos
+// Sensores en bus I2C predeterminado 'Wire' (GPIO 21 SDA, GPIO 22 SCL)
+Adafruit_BMP280 bmp(&Wire);
 Adafruit_INA219 ina219;
+
+// Pantalla LCD en canal I2C secundario
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 ld2410 radar;
 
@@ -388,7 +391,12 @@ void setup() {
   pinMode(B3, INPUT);  
   pinMode(OPTO, INPUT_PULLUP);
 
+  // 1. Inicializar bus I2C predeterminado para BMP280 e INA219 (GPIO 21 / 22)
+  Wire.begin();
+
+  // 2. Inicializar bus I2C secundario para la pantalla LCD (GPIO 18 / 19)
   Wire1.begin(SDA5V, SCL5V);
+
   while (!bmp.begin(0x76)) {
     Serial.println("Esperando sensor BMP280...");
     delay(500);
@@ -401,6 +409,7 @@ void setup() {
   }
   Serial.println("INA219 inicializado");
 
+  // Inicialización de pantalla LCD usando Wire1
   lcd.init();          
   lcd.backlight();     
 
@@ -811,6 +820,7 @@ void lecturas() {
   if (tiempoActual - tiempoAnterior >= INTERVALO) {
     tiempoAnterior = tiempoActual;
     t1 = bmp.readTemperature();
+    Serial.println(t1);
     valorInicialP = bmp.readPressure() / 100.0F; // Convertir Pa a hPa
     P1 = map(valorInicialP, 0, 1050, 0, 100);
     cor = ina219.getCurrent_mA();
