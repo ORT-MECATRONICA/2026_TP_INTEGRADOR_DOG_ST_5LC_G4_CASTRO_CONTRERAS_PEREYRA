@@ -64,7 +64,7 @@ Preferences preferences;
 // Estructura de datos
 typedef struct {
   long time;
-  float T1;   // temperatura en grados
+  float t1;   // temperatura en grados
   float P1;   // valor presion en hPa
   float luz;  // valor entre 0 y 100% 
   float G1;   // valor gas entre 0 y 100% 
@@ -79,7 +79,7 @@ estructura datos_struct[valor_max_struct];  /// Guardo valores hasta que lo pued
 estructura aux2;
 
 // Variables globales de mediciones de sensores
-float T1 = 0;
+float t1 = 0;
 float P1 = 0;
 float luz = 0;
 float G1 = 0;
@@ -172,6 +172,7 @@ unsigned long tiempoPulso3 = 0;
 unsigned long desfasaje = 0;
 unsigned long tiempoMillis = 0;
 unsigned long tiempoLiberacion = 0;
+float valorInicialP;
 int valorInicialLDR;
 int valorInicialMQ2;
 
@@ -231,11 +232,11 @@ void fun_envio_mqtt() {
     Serial.print("enviando ");
     snprintf(mqtt_payload, sizeof(mqtt_payload), 
              "%d&%ld&%.2f&%.2f&%.2f&%.2f&%.2f&%u&%u&%u", 
-             name_device, aux2.time, aux2.T1, aux2.P1, aux2.luz, 
+             name_device, aux2.time, aux2.t1, aux2.P1, aux2.luz, 
              aux2.G1, aux2.cor, aux2.pre, aux2.oct, aux2.Alarma);
     
     aux2.time = 0;      /// limpio valores
-    aux2.T1 = 0;
+    aux2.t1 = 0;
     aux2.P1 = 0;
     aux2.luz = 0;
     aux2.G1 = 0;
@@ -255,7 +256,7 @@ void fun_envio_mqtt() {
 void fun_saca() {
   if (indice_saca != indice_entra) {
     aux2.time = datos_struct[indice_saca].time;
-    aux2.T1 = datos_struct[indice_saca].T1;
+    aux2.t1 = datos_struct[indice_saca].t1;
     aux2.P1 = datos_struct[indice_saca].P1;
     aux2.luz = datos_struct[indice_saca].luz;
     aux2.G1 = datos_struct[indice_saca].G1;
@@ -291,7 +292,7 @@ void fun_entra(void) {
   Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 
   datos_struct[indice_entra].time = timestamp;
-  datos_struct[indice_entra].T1 = T1; 
+  datos_struct[indice_entra].t1 = t1; 
   datos_struct[indice_entra].P1 = P1;  
   datos_struct[indice_entra].luz = luz;
   datos_struct[indice_entra].G1 = G1;
@@ -339,7 +340,7 @@ void guardarPreferencias() {
 void verificarUmbrales() {
   int contadorAlertas = 0;
 
-  if (T1 > UT1) contadorAlertas++;
+  if (t1 > UT1) contadorAlertas++;
   if (P1 > UP1) contadorAlertas++;
   if (cor > Ucor) contadorAlertas++;
   if (luz > Uluz) contadorAlertas++;
@@ -662,7 +663,7 @@ void loop() {
       lcd.print("U:");
       lcd.print(UT1);
       lcd.print("C R:");
-      lcd.print(T1, 1);
+      lcd.print(t1, 1);
       lcd.print("C  ");
       pulsosMenu();
       break;
@@ -809,8 +810,9 @@ void lecturas() {
   tiempoActual = millis();
   if (tiempoActual - tiempoAnterior >= INTERVALO) {
     tiempoAnterior = tiempoActual;
-    T1 = bmp.readTemperature();
-    P1 = bmp.readPressure() / 100.0F; // Convertir Pa a hPa
+    t1 = bmp.readTemperature();
+    valorInicialP = bmp.readPressure() / 100.0F; // Convertir Pa a hPa
+    P1 = map(valorInicialP, 0, 1050, 0, 100);
     cor = ina219.getCurrent_mA();
     valorInicialLDR = analogRead(LDR);
     luz = map(valorInicialLDR, 0, 4095, 0, 100);
